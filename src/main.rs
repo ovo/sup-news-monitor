@@ -1,43 +1,91 @@
-use chrono::Local;
+use chrono::{Utc, Local};
 use dotenv::dotenv;
 use reqwest::Client;
 use scraper::{Html, Selector};
-use tokio::time::delay_for;
 use std::{env, time::Duration};
+use tokio::time::delay_for;
 
+mod discord;
+
+use discord::*;
 
 #[tokio::main]
 async fn main() {
     dotenv().ok();
-    let current: u16 = env::var("CURRENT_NEWS").unwrap().parse().unwrap();
+
+    let mut current: u16 = env::var("CURRENT_NEWS").unwrap().parse().unwrap();
     let delay: u64 = env::var("DELAY").unwrap().parse().unwrap();
-
-    monitor(current, delay).await;
-}
-
-async fn monitor(current: u16, delay: u64) {
     let client = Client::new();
-    let mut new = current + 1;
+
     loop {
         delay_for(Duration::from_millis(delay)).await;
-        let url = format!("{}{}", "https://supremenewyork.com/news/", &new.to_string());
-        let resp = client.get(&url).send().await.unwrap();
-        if resp.status() != 404 {
-            let text = &resp.text().await.unwrap();
-            let doc = Html::parse_document(&text);
-            let selector = Selector::parse("h2").unwrap();
+        match monitor(current, &client).await {
+            Ok(num) => current = num,
+            Err(why) => println!("[{}] {}", Local::now().format("%T"), why),
+        };
+    }
+}
 
-            let joined = doc
-                .select(&selector)
-                .next()
-                .unwrap()
-                .text()
-                .collect::<Vec<_>>()
-                .join("");
-            
-            let time = Local::now().format("%T");
-            println!("[{}] {}", time, joined);
-            new = &new + 1;
+async fn monitor(current: u16, client: &Client) -> Result<u16, String> {
+    let time = Local::now().format("%T");
+    let url = format!("{}{}", "https://www.supremenewyork.com/news/", &current.to_string());
+    let resp = match client.get(&url).send().await {
+        Ok(resp) => resp,
+        Err(e) => return Err(format!("{}: {}", "Could not make request".to_string(), e)),
+    };
+    if resp.status() != 404 {
+        let text = &resp.text().await.unwrap();
+        let doc = Html::parse_document(&text);
+        let title_selector = Selector::parse("h2").unwrap();
+        let blurb_selector = Selector::parse(".blurb").unwrap();
+        let img_selector = Selector::parse("img").unwrap();
+
+        let title = match doc.select(&title_selector).next() {
+            Some(element) => element,
+            None => return Err("Error finding title".to_string()),
         }
+        .text()
+        .collect::<String>();
+
+        let blurb = match doc
+            .select(&blurb_selector) .next() { Some(element) => element, None => return Err("Error finding blurb".to_string()),
+            }
+            .text()
+            .collect::<String>();
+
+        let img = match doc
+            .select(&img_selector)
+            .next() {
+                Some(element) => element,
+                None => return Err("Error finding image".to_string()),
+            }
+            .value()
+            .attr("src")
+            .unwrap();
+
+        println!("[{}] {}", time, &title);
+
+        let embed = Embed {
+            title,
+            description: blurb,
+            url,
+            timestamp: Utc::now().format("%+").to_string(),
+            color: 0xFFFFF,
+            thumbnail: EmbedThumbnail {
+                url: format!("https:{}", img)
+            },
+            footer: EmbedFooter {
+                text: "Supreme News".to_owned()
+            }
+        };
+
+        match embed.send_discord(client, env::var("DISCORD_WEBHOOK").unwrap()).await {
+            Ok(_) => (),
+            Err(why) => return Err(format!("Could not send embed: {}", why))
+        }
+
+        return Ok(current + 1);
+    } else {
+        return Ok(current);
     }
 }
