@@ -1,9 +1,9 @@
-use serde::{Deserialize, Serialize};
 use reqwest::Client;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Payload {
-    embeds: [Embed; 1] 
+    embeds: [Embed; 1],
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -28,16 +28,14 @@ pub struct EmbedFooter {
 }
 
 impl Embed {
-    pub async fn send_discord(self, client: &Client, webhook: String) -> Result<(), reqwest::Error> {
-        let load = Payload {
-            embeds: [self]
-        };
-        client
-            .post(&webhook)
-            .json(&load)
-            .send()
-            .await?;
-        
+    pub async fn send_discord(
+        self,
+        client: &Client,
+        webhook: String,
+    ) -> Result<(), reqwest::Error> {
+        let load = Payload { embeds: [self] };
+        client.post(&webhook).json(&load).send().await?;
+
         Ok(())
     }
 }
